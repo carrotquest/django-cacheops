@@ -1,10 +1,7 @@
-# -*- coding: utf-8 -*-
 import re
 import json
 import inspect
-from funcy import memoize, compose, wraps, any, any_fn, select_values
-from funcy.py3 import lmapcat
-from .cross import md5hex
+from funcy import memoize, compose, wraps, any, any_fn, select_values, lmapcat
 
 from django.db import models
 from django.http import HttpRequest
@@ -12,17 +9,9 @@ from django.http import HttpRequest
 from .conf import model_profile
 
 
-# NOTE: we don't serialize this fields since their values could be very long
-#       and one should not filter by their equality anyway.
-NOT_SERIALIZED_FIELDS = (
-    models.FileField,
-    models.TextField, # One should not filter by long text equality
-    models.BinaryField,
-)
-
-
 def get_concrete_model(model):
-    return next(b for b in model.__mro__ if issubclass(b, models.Model) and not b._meta.abstract)
+    return next((b for b in model.__mro__ if issubclass(b, models.Model) and b is not models.Model
+                 and not b._meta.proxy and not b._meta.abstract), None)
 
 def model_family(model):
     """
@@ -35,7 +24,7 @@ def model_family(model):
     #       Cacheops doesn't support them anyway.
     # NOTE: when this is called in Manager.contribute_to_class()
     #       ._meta.concrete_model might still be None
-    return class_tree(model._meta.concrete_model or get_concrete_model(model))
+    return class_tree(model._meta.concrete_model or get_concrete_model(model) or model)
 
 
 @memoize
@@ -75,7 +64,11 @@ def stamp_fields(model):
     """
     Returns serialized description of model fields.
     """
-    stamp = str(sorted((f.name, f.attname, f.db_column, f.__class__) for f in model._meta.fields))
+    def _stamp(field):
+        name, class_name, *_ = field.deconstruct()
+        return name, class_name, field.attname, field.column
+
+    stamp = str(sorted(map(_stamp, model._meta.fields)))
     return md5hex(stamp)
 
 
@@ -148,6 +141,29 @@ NEWLINE_BETWEEN_TAGS = mark_safe('>\n<')
 SPACE_BETWEEN_TAGS = mark_safe('> <')
 
 def carefully_strip_whitespace(text):
-    text = re.sub(r'>\s*\n\s*<', NEWLINE_BETWEEN_TAGS, text)
-    text = re.sub(r'>\s{2,}<', SPACE_BETWEEN_TAGS, text)
+    def repl(m):
+        return NEWLINE_BETWEEN_TAGS if '\n' in m.group(0) else SPACE_BETWEEN_TAGS
+    text = re.sub(r'>\s{2,}<', repl, text)
     return text
+
+
+### hashing helpers
+
+import hashlib
+
+
+class md5:
+    def __init__(self, s=None):
+        self.md5 = hashlib.md5()
+        if s is not None:
+            self.update(s)
+
+    def update(self, s):
+        return self.md5.update(s.encode('utf-8'))
+
+    def hexdigest(self):
+        return self.md5.hexdigest()
+
+
+def md5hex(s):
+    return md5(s).hexdigest()

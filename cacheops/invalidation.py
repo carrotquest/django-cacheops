@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import json
 import threading
 from funcy import memoize, post_processing, ContextDecorator
@@ -6,7 +5,6 @@ from django.db import DEFAULT_DB_ALIAS
 from django.db.models.expressions import F, Expression
 
 from .conf import settings
-from .utils import NOT_SERIALIZED_FIELDS
 from .sharding import get_prefix
 from .redis import redis_client, handle_connection_failure, load_script
 from .signals import cache_invalidated
@@ -55,7 +53,8 @@ def invalidate_model(model, using=DEFAULT_DB_ALIAS):
     conjs_keys = redis_client.keys('%sconj:%s:*' % (prefix, model._meta.db_table))
     if conjs_keys:
         cache_keys = redis_client.sunion(conjs_keys)
-        redis_client.delete(*(list(cache_keys) + conjs_keys))
+        keys = list(cache_keys) + conjs_keys
+        redis_client.unlink(*keys)
     cache_invalidated.send(sender=model, obj_dict=None)
 
 
@@ -92,7 +91,7 @@ no_invalidation = _no_invalidation()
 @memoize
 def serializable_fields(model):
     return tuple(f for f in model._meta.fields
-                   if not isinstance(f, NOT_SERIALIZED_FIELDS))
+                   if not isinstance(f, settings.CACHEOPS_SKIP_FIELDS))
 
 @post_processing(dict)
 def get_obj_dict(model, obj):

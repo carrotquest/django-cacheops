@@ -75,7 +75,7 @@ else:
             # Make in memory sqlite test db to work with threads
             # See https://code.djangoproject.com/ticket/12118
             'TEST': {
-                'NAME': '/dev/shm/cacheops_sqlite.db'
+                'NAME': ':memory:cache=shared'
             }
         },
         'slave': {
@@ -112,5 +112,4 @@ ALLOWED_HOSTS = ['testserver']
 
 SECRET_KEY = 'abc'
 
-# Required in Django 1.9
 TEMPLATES = [{'BACKEND': 'django.template.backends.django.DjangoTemplates'}]

@@ -19,20 +19,20 @@ And there is more to it:
 Requirements
 ------------
 
-| Python 2.7 or 3.3+, Django 1.8+ and Redis 2.6+.
+Python 3.5+, Django 2.1+ and Redis 4.0+.
 
 
 Installation
 ------------
 
-Using pip::
+Using pip:
+
+.. code:: bash
 
     $ pip install django-cacheops
 
-Or you can get latest one from github::
-
-    $ git clone git://github.com/Suor/django-cacheops.git
-    $ pip install -e django-cacheops
+    # Or from github directly
+    $ pip install git+https://github.com/Suor/django-cacheops.git@master
 
 
 Setup
@@ -69,7 +69,12 @@ Setup redis connection and enable caching for desired models:
         'service_name': 'mymaster',          # sentinel service name, required
         'socket_timeout': 0.1,               # connection timeout in seconds, optional
         'db': 0                              # redis database, default: 0
+        ...                                  # everything else is passed to Sentinel()
     }
+
+    # To use your own redis client class,
+    # should be compatible or subclass cacheops.redis.CacheopsRedis
+    CACHEOPS_CLIENT_CLASS = 'your.redis.ClientClass'
 
     CACHEOPS = {
         # Automatically cache any User.objects.get() calls for 15 minutes
@@ -98,6 +103,9 @@ Setup redis connection and enable caching for desired models:
 
         # NOTE: binding signals has its overhead, like preventing fast mass deletes,
         #       you might want to only register whatever you cache and dependencies.
+
+        # Finally you can explicitely forbid even manual caching with:
+        'some_app.*': None,
     }
 
 You can configure default profile setting with ``CACHEOPS_DEFAULTS``. This way you can rewrite the config above:
@@ -113,6 +121,10 @@ You can configure default profile setting with ``CACHEOPS_DEFAULTS``. This way y
         'auth.permission': {'ops': 'all'},
         '*.*': {},
     }
+
+Using ``'*.*'`` with non-empty ``ops`` is **not recommended**
+since it will easily cache something you don't intent to or even know about like migrations tables.
+The better approach will be restricting by app with ``'app_name.*'``.
 
 Besides ``ops`` and ``timeout`` options you can also use:
 
@@ -154,14 +166,14 @@ It's automatic you just need to set it up.
 
 | **Manual caching**
 
-You can force any queryset to use cache by calling it's ``.cache()`` method:
+You can force any queryset to use cache by calling its ``.cache()`` method:
 
 .. code:: python
 
     Article.objects.filter(tag=2).cache()
 
 
-Here you can specify which ops should be cached for queryset, for example, this code:
+Here you can specify which ops should be cached for the queryset, for example, this code:
 
 .. code:: python
 
@@ -637,6 +649,8 @@ A ``query`` object passed to callback also enables reflection on used databases 
             return 'helper:'
         if query.tables == ['blog_post']:
             return 'blog:'
+
+**NOTE:** prefix is not used in simple and file cache. This might change in future cacheops.
 
 
 Using memory limit

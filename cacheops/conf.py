@@ -1,25 +1,29 @@
-# -*- coding: utf-8 -*-
-import six
-from funcy import memoize, merge, namespace
+from funcy import memoize, merge
 
 from django.conf import settings as base_settings
 from django.core.exceptions import ImproperlyConfigured
 from django.core.signals import setting_changed
+from django.db import models
 from django.utils.module_loading import import_string
 
 
 ALL_OPS = {'get', 'fetch', 'count', 'aggregate', 'exists'}
 
 
-class Defaults(namespace):
+class Defaults:
     CACHEOPS_ENABLED = True
     CACHEOPS_REDIS = {}
     CACHEOPS_DEFAULTS = {}
     CACHEOPS = {}
     CACHEOPS_PREFIX = lambda query: ''
     CACHEOPS_LRU = False
+    CACHEOPS_CLIENT_CLASS = None
     CACHEOPS_DEGRADE_ON_FAILURE = False
     CACHEOPS_SENTINEL = {}
+    # NOTE: we don't use this fields in invalidator conditions since their values could be very long
+    #       and one should not filter by their equality anyway.
+    CACHEOPS_SKIP_FIELDS = models.FileField, models.TextField, models.BinaryField
+    CACHEOPS_LONG_DISJUNCTION = 8
 
     FILE_CACHE_DIR = '/tmp/cacheops_file_cache'
     FILE_CACHE_TIMEOUT = 60*60*24*30
@@ -61,13 +65,16 @@ def prepare_profiles():
         if mp['ops'] == 'all':
             mp['ops'] = ALL_OPS
         # People will do that anyway :)
-        if isinstance(mp['ops'], six.string_types):
+        if isinstance(mp['ops'], str):
             mp['ops'] = {mp['ops']}
         mp['ops'] = set(mp['ops'])
 
         if 'timeout' not in mp:
             raise ImproperlyConfigured(
                 'You must specify "timeout" option in "%s" CACHEOPS profile' % app_model)
+        if not isinstance(mp['timeout'], int):
+            raise ImproperlyConfigured(
+                '"timeout" option in "%s" CACHEOPS profile should be an integer' % app_model)
 
     return model_profiles
 
@@ -76,6 +83,7 @@ def model_profile(model):
     """
     Returns cacheops profile for a model
     """
+    # Django migrations these fake models, we don't want to cache them
     if model.__module__ == '__fake__':
         return None
 

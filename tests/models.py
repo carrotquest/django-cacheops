@@ -1,9 +1,10 @@
 import os
+import uuid
 from datetime import date, datetime, time
 
 from django.db import models
 from django.db.models.query import QuerySet
-from django.db.models import sql
+from django.db.models import sql, manager
 from django.contrib.auth.models import User
 
 
@@ -53,7 +54,7 @@ class CustomField(models.Field):
             return value
         return CustomValue(value)
 
-    def from_db_value(self, value, expession, conn, context):
+    def from_db_value(self, value, expession, conn):
         return self.to_python(value)
 
     def get_prep_value(self, value):
@@ -83,7 +84,7 @@ class IntegerArrayField(models.Field):
             return value
         return [int(v) for v in value.split(',')]
 
-    def from_db_value(self, value, expession, conn, context):
+    def from_db_value(self, value, expession, conn):
         return self.to_python(value)
 
     def get_prep_value(self, value):
@@ -98,8 +99,7 @@ class Weird(models.Model):
     time_field = models.TimeField(default=time(10, 10))
     list_field = IntegerArrayField(default=list, blank=True)
     custom_field = CustomField(default=custom_value_default)
-    if hasattr(models, 'BinaryField'):
-        binary_field = models.BinaryField()
+    binary_field = models.BinaryField()
 
     objects = models.Manager()
     customs = CustomManager()
@@ -196,7 +196,6 @@ class DbAgnostic(models.Model):
 class DbBinded(models.Model):
     pass
 
-
 # contrib.postgis
 if os.environ.get('CACHEOPS_DB') == 'postgis':
     from django.contrib.gis.db import models as gis_models
@@ -218,3 +217,53 @@ def set_boolean_true(sender, instance, created, **kwargs):
 
 from django.db.models.signals import post_save
 post_save.connect(set_boolean_true, sender=One)
+
+
+# 312
+class Device(models.Model):
+    uid = models.UUIDField(default=uuid.uuid4)
+    model = models.CharField(max_length=64)
+
+
+# 333
+class CustomQuerySet(QuerySet):
+    pass
+
+
+class CustomFromQSManager(manager.BaseManager.from_queryset(CustomQuerySet)):
+    use_for_related_fields = True
+
+
+class CustomFromQSModel(models.Model):
+    boolean = models.BooleanField(default=False)
+    objects = CustomFromQSManager()
+
+
+# 352
+class CombinedField(models.CharField):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.another_field = models.CharField(*args, **kwargs)
+
+    def contribute_to_class(self, cls, name, **kwargs):
+        super().contribute_to_class(cls, name, private_only=True)
+        self.another_field.contribute_to_class(cls, name, **kwargs)
+
+
+class CombinedFieldModel(models.Model):
+    text = CombinedField(max_length=8, default='example')
+
+
+# 353
+class Foo(models.Model):
+    pass
+
+
+class Bar(models.Model):
+    foo = models.OneToOneField(
+        to="Foo",
+        on_delete=models.SET_NULL,
+        related_name='bar',
+        blank=True,
+        null=True
+    )

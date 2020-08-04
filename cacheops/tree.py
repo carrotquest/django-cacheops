@@ -1,26 +1,14 @@
-# -*- coding: utf-8 -*-
 from itertools import product
-from funcy import group_by, join_with, memoize, any
-from funcy.py3 import lcat, lmap
+from funcy import group_by, join_with, lcat, lmap
 
-import django
-from django.apps import apps
 from django.db.models.query import QuerySet
 from django.db.models.sql import OR
 from django.db.models.sql.query import Query, ExtraWhere
 from django.db.models.sql.where import NothingNode, SubqueryConstraint
 from django.db.models.lookups import Lookup, Exact, In, IsNull
-# This thing existed in Django 1.8 and earlier
-try:
-    from django.db.models.sql.where import EverythingNode
-except ImportError:
-    class EverythingNode(object):
-        pass
+from django.db.models.expressions import BaseExpression, Exists
 
-from .utils import model_profile, NOT_SERIALIZED_FIELDS
-
-
-LONG_DISJUNCTION = 8
+from .conf import settings
 
 
 def dnfs(qs):
@@ -52,10 +40,10 @@ def dnfs(qs):
             if not hasattr(where.lhs, 'target'):
                 return SOME_TREE
             # Don't bother with complex right hand side either
-            if isinstance(where.rhs, (QuerySet, Query)):
+            if isinstance(where.rhs, (QuerySet, Query, BaseExpression)):
                 return SOME_TREE
             # Skip conditions on non-serialized fields
-            if isinstance(where.lhs.target, NOT_SERIALIZED_FIELDS):
+            if isinstance(where.lhs.target, settings.CACHEOPS_SKIP_FIELDS):
                 return SOME_TREE
 
             attname = where.lhs.target.attname
@@ -63,15 +51,13 @@ def dnfs(qs):
                 return [[(where.lhs.alias, attname, where.rhs, True)]]
             elif isinstance(where, IsNull):
                 return [[(where.lhs.alias, attname, None, where.rhs)]]
-            elif isinstance(where, In) and len(where.rhs) < LONG_DISJUNCTION:
+            elif isinstance(where, In) and len(where.rhs) < settings.CACHEOPS_LONG_DISJUNCTION:
                 return [[(where.lhs.alias, attname, v, True)] for v in where.rhs]
             else:
                 return SOME_TREE
-        elif isinstance(where, EverythingNode):
-            return [[]]
         elif isinstance(where, NothingNode):
             return []
-        elif isinstance(where, (ExtraWhere, SubqueryConstraint)):
+        elif isinstance(where, (ExtraWhere, SubqueryConstraint, Exists)):
             return SOME_TREE
         elif len(where) == 0:
             return [[]]
@@ -115,7 +101,7 @@ def dnfs(qs):
         # NOTE: a more elaborate DNF reduction is not really needed,
         #       just keep your querysets sane.
         if not all(cleaned):
-            return [[]]
+            return [{}]
         return cleaned
 
     def query_dnf(query):
@@ -129,21 +115,12 @@ def dnfs(qs):
         # NOTE: we exclude content_type as it never changes and will hold dead invalidation info
         main_alias = query.model._meta.db_table
         aliases = {alias for alias, join in query.alias_map.items()
-                   if query.alias_refcount[alias] and table_tracked(join.table_name)} \
+                   if query.alias_refcount[alias]} \
                 | {main_alias} - {'django_content_type'}
         tables = group_by(table_for, aliases)
         return {table: clean_dnf(dnf, table_aliases) for table, table_aliases in tables.items()}
 
-    if django.VERSION >= (1, 11) and qs.query.combined_queries:
+    if qs.query.combined_queries:
         return join_with(lcat, (query_dnf(q) for q in qs.query.combined_queries))
     else:
         return query_dnf(qs.query)
-
-
-@memoize
-def table_tracked(table):
-    models = [m for m in apps.get_models(include_auto_created=True) if m._meta.db_table == table]
-    # Unknown table, track it to be safe
-    if not models:
-        raise memoize.skip(True)
-    return any(model_profile, models)
